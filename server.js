@@ -6,7 +6,7 @@ app.use(cors());
 app.use(express.json());
 
 const GOAFFPRO_TOKEN = process.env.GOAFFPRO_TOKEN;
-const GOAFFPRO_API = "https://api.goaffpro.com/admin";
+const GOAFFPRO_API = "https://api.goaffpro.com/v1/admin";
 
 const ranks = [
   { rank: "Member", maintenance: 580, target: 6380, bonus: 650, salary: 0, active: 2, levels: "1" },
@@ -27,42 +27,56 @@ async function goaffpro(path) {
   });
 
   if (!res.ok) {
-    throw new Error(`GoAffPro API error ${res.status}`);
+    throw new Error(`GoAffPro API error ${res.status} on ${path}`);
   }
 
   return res.json();
 }
 
-function arr(payload, key) {
+function toArray(payload, key) {
   if (Array.isArray(payload)) return payload;
   if (Array.isArray(payload?.[key])) return payload[key];
   if (Array.isArray(payload?.data)) return payload.data;
+  if (Array.isArray(payload?.results)) return payload.results;
   return [];
 }
 
-function amount(x) {
+function amount(item) {
   return Number(
-    x?.total ||
-    x?.total_price ||
-    x?.amount ||
-    x?.order_total ||
-    x?.sale_amount ||
-    x?.revenue ||
-    x?.commission ||
+    item?.total ||
+    item?.total_price ||
+    item?.amount ||
+    item?.order_total ||
+    item?.sale_amount ||
+    item?.revenue ||
+    item?.commission ||
     0
   );
 }
 
-function idOf(x) {
-  return String(x?.id || x?._id || x?.affiliate_id || x?.partner_id || "");
+function idOf(item) {
+  return String(item?.id || item?._id || item?.affiliate_id || item?.partner_id || "");
 }
 
-function affiliateKey(x) {
-  return String(x?.affiliate_id || x?.partner_id || x?.referrer_id || x?.affiliate?.id || "");
+function affiliateKey(item) {
+  return String(
+    item?.affiliate_id ||
+    item?.partner_id ||
+    item?.referrer_id ||
+    item?.affiliate?.id ||
+    ""
+  );
 }
 
-function sponsorKey(x) {
-  return String(x?.parent_id || x?.referrer_id || x?.sponsor_id || x?.upline_id || x?.parent?.id || "");
+function sponsorKey(item) {
+  return String(
+    item?.parent_id ||
+    item?.referrer_id ||
+    item?.sponsor_id ||
+    item?.upline_id ||
+    item?.parent?.id ||
+    ""
+  );
 }
 
 function calculateRank(data) {
@@ -81,28 +95,83 @@ function calculateRank(data) {
   return achieved;
 }
 
-function nextRank(rank) {
-  const i = ranks.findIndex(r => r.rank === rank.rank);
-  return ranks[i + 1] || null;
+function getNextRank(rank) {
+  const index = ranks.findIndex(r => r.rank === rank.rank);
+  return ranks[index + 1] || null;
+}
+
+function buildDashboard(data) {
+  const rank = calculateRank(data);
+  const next = getNextRank(rank);
+
+  const qualifies =
+    data.personalSales >= rank.maintenance &&
+    data.teamSales >= rank.target &&
+    data.activeLevel1Members >= rank.active;
+
+  const target = next ? next.target : rank.target;
+  const progressPercent = Math.min((data.teamSales / target) * 100, 100);
+
+  return {
+    affiliateId: data.affiliateId || "",
+    affiliateName: data.affiliateName || "Affiliate",
+    currentRank: rank.rank,
+    nextRank: next ? next.rank : "Top Rank",
+    qualifiesForCommission: qualifies,
+    personalSales: data.personalSales,
+    teamSales: data.teamSales,
+    activeLevel1Members: data.activeLevel1Members,
+    commissions: data.commissions || 0,
+    requiredMaintenance: rank.maintenance,
+    requiredTeamSales: rank.target,
+    requiredActiveMembers: rank.active,
+    levelsUnlocked: rank.levels,
+    bonus: qualifies ? rank.bonus : 0,
+    salary: qualifies ? rank.salary : 0,
+    progressPercent: Number(progressPercent.toFixed(2)),
+    message: qualifies
+      ? `Congratulations! You qualify for ${rank.rank}.`
+      : "You do not qualify yet. Reach maintenance, team sales, and active Level 1 members."
+  };
 }
 
 app.get("/", (req, res) => {
   res.send("MLM GoAffPro backend is running.");
 });
 
+app.get("/api/test", (req, res) => {
+  res.json({
+    status: "Backend working",
+    goaffproBase: GOAFFPRO_API,
+    tokenLoaded: Boolean(GOAFFPRO_TOKEN)
+  });
+});
+
 app.get("/api/affiliates", async (req, res) => {
-  const data = await goaffpro("/affiliates");
-  res.json(data);
+  try {
+    const data = await goaffpro("/affiliates");
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: true, message: err.message });
+  }
 });
 
 app.get("/api/orders", async (req, res) => {
-  const data = await goaffpro("/orders");
-  res.json(data);
+  try {
+    const data = await goaffpro("/orders");
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: true, message: err.message });
+  }
 });
 
 app.get("/api/commissions", async (req, res) => {
-  const data = await goaffpro("/rewards");
-  res.json(data);
+  try {
+    const data = await goaffpro("/rewards");
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: true, message: err.message });
+  }
 });
 
 app.get("/api/dashboard", async (req, res) => {
@@ -114,24 +183,30 @@ app.get("/api/dashboard", async (req, res) => {
     const ordersRaw = await goaffpro("/orders");
     const rewardsRaw = await goaffpro("/rewards");
 
-    const affiliates = arr(affiliatesRaw, "affiliates");
-    const orders = arr(ordersRaw, "orders");
-    const rewards = arr(rewardsRaw, "rewards");
+    const affiliates = toArray(affiliatesRaw, "affiliates");
+    const orders = toArray(ordersRaw, "orders");
+    const rewards = toArray(rewardsRaw, "rewards");
 
     let affiliate = null;
 
     if (email) {
-      affiliate = affiliates.find(a => String(a.email || "").toLowerCase() === email);
+      affiliate = affiliates.find(a =>
+        String(a.email || "").toLowerCase() === email
+      );
     }
 
     if (!affiliate && affiliateIdQuery) {
       affiliate = affiliates.find(a => idOf(a) === affiliateIdQuery);
     }
 
+    if (!affiliate && affiliates.length > 0) {
+      affiliate = affiliates[0];
+    }
+
     if (!affiliate) {
       return res.status(404).json({
         error: true,
-        message: "Affiliate not found. Pass email or affiliateId."
+        message: "Affiliate not found."
       });
     }
 
@@ -143,7 +218,10 @@ app.get("/api/dashboard", async (req, res) => {
     const personalOrders = orders.filter(o => affiliateKey(o) === affiliateId);
     const personalSales = personalOrders.reduce((sum, o) => sum + amount(o), 0);
 
-    const teamOrders = orders.filter(o => directReferralIds.includes(affiliateKey(o)));
+    const teamOrders = orders.filter(o =>
+      directReferralIds.includes(affiliateKey(o))
+    );
+
     const teamSalesFromDirects = teamOrders.reduce((sum, o) => sum + amount(o), 0);
     const teamSales = personalSales + teamSalesFromDirects;
 
@@ -154,38 +232,21 @@ app.get("/api/dashboard", async (req, res) => {
     const affiliateRewards = rewards.filter(r => affiliateKey(r) === affiliateId);
     const commissions = affiliateRewards.reduce((sum, r) => sum + amount(r), 0);
 
-    const rank = calculateRank({ personalSales, teamSales, activeLevel1Members });
-    const next = nextRank(rank);
-
-    const qualifies =
-      personalSales >= rank.maintenance &&
-      teamSales >= rank.target &&
-      activeLevel1Members >= rank.active;
-
-    const target = next ? next.target : rank.target;
-    const progressPercent = Math.min((teamSales / target) * 100, 100);
-
-    res.json({
+    const dashboard = buildDashboard({
       affiliateId,
-      affiliateName: affiliate.name || affiliate.first_name || affiliate.email,
-      currentRank: rank.rank,
-      nextRank: next ? next.rank : "Top Rank",
-      qualifiesForCommission: qualifies,
+      affiliateName:
+        affiliate.name ||
+        affiliate.first_name ||
+        affiliate.email ||
+        "Affiliate",
       personalSales,
       teamSales,
       activeLevel1Members,
-      commissions,
-      requiredMaintenance: rank.maintenance,
-      requiredTeamSales: rank.target,
-      requiredActiveMembers: rank.active,
-      levelsUnlocked: rank.levels,
-      bonus: qualifies ? rank.bonus : 0,
-      salary: qualifies ? rank.salary : 0,
-      progressPercent: Number(progressPercent.toFixed(2)),
-      message: qualifies
-        ? `Congratulations! You qualify for ${rank.rank}.`
-        : "You do not qualify yet. Reach maintenance, team sales, and active Level 1 members."
+      commissions
     });
+
+    res.json(dashboard);
+
   } catch (err) {
     res.status(500).json({
       error: true,
@@ -194,6 +255,18 @@ app.get("/api/dashboard", async (req, res) => {
   }
 });
 
+app.get("/api/demo-dashboard", (req, res) => {
+  res.json(buildDashboard({
+    affiliateName: "Demo Affiliate",
+    personalSales: 3000,
+    teamSales: 180000,
+    activeLevel1Members: 8,
+    commissions: 12000
+  }));
+});
+
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`MLM backend running on port ${PORT}`));
-    
+
+app.listen(PORT, () => {
+  console.log(`MLM backend running on port ${PORT}`);
+});
