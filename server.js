@@ -5,20 +5,9 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-async function goaffpro(path) {
-  const res = await fetch(`${GOAFFPRO_API}${path}`, {
-    headers: {
-      "X-GOAFFPRO-ACCESS-TOKEN": GOAFFPRO_TOKEN,
-      "Content-Type": "application/json"
-    }
-  });
+const GOAFFPRO_TOKEN = process.env.GOAFFPRO_TOKEN;
+const GOAFFPRO_API = "https://api.goaffpro.com/v1/admin";
 
-  if (!res.ok) {
-    throw new Error(`GoAffPro API error ${res.status} on ${path}`);
-  }
-
-  return res.json();
-}
 const ranks = [
   { rank: "Member", maintenance: 580, target: 6380, bonus: 650, salary: 0, active: 2, levels: "1" },
   { rank: "Associate", maintenance: 1160, target: 20000, bonus: 2100, salary: 0, active: 4, levels: "1 & 2" },
@@ -32,7 +21,7 @@ const ranks = [
 async function goaffpro(path) {
   const res = await fetch(`${GOAFFPRO_API}${path}`, {
     headers: {
-      Authorization: `Bearer ${GOAFFPRO_TOKEN}`,
+      "X-GOAFFPRO-ACCESS-TOKEN": GOAFFPRO_TOKEN,
       "Content-Type": "application/json"
     }
   });
