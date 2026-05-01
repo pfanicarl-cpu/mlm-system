@@ -1,8 +1,5 @@
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
-
-dotenv.config();
 
 const app = express();
 app.use(cors());
@@ -18,77 +15,93 @@ const ranks = [
   { rank: "Executive Director", maintenance: 8120, target: 2500000, bonus: 100000, salary: 35000, active: 14, levels: "1 - 7" }
 ];
 
-function calculateRank(data) {
+function money(value) {
+  return Number(value || 0);
+}
+
+function calculateRank(affiliate) {
   let achieved = ranks[0];
 
-  for (const r of ranks) {
+  for (const rank of ranks) {
     if (
-      data.personalSales >= r.maintenance &&
-      data.teamSales >= r.target &&
-      data.activeLevel1Members >= r.active
+      money(affiliate.personalSales) >= rank.maintenance &&
+      money(affiliate.teamSales) >= rank.target &&
+      money(affiliate.activeLevel1Members) >= rank.active
     ) {
-      achieved = r;
+      achieved = rank;
     }
   }
 
   return achieved;
 }
 
-function getNextRank(rank) {
-  const index = ranks.findIndex(r => r.rank === rank.rank);
+function getNextRank(currentRank) {
+  const index = ranks.findIndex(r => r.rank === currentRank.rank);
   return ranks[index + 1] || null;
 }
 
+function buildDashboard(affiliate) {
+  const rank = calculateRank(affiliate);
+  const next = getNextRank(rank);
+
+  const qualifies =
+    money(affiliate.personalSales) >= rank.maintenance &&
+    money(affiliate.teamSales) >= rank.target &&
+    money(affiliate.activeLevel1Members) >= rank.active;
+
+  const progressTarget = next ? next.target : rank.target;
+  const progressPercent = Math.min((money(affiliate.teamSales) / progressTarget) * 100, 100);
+
+  return {
+    affiliateName: affiliate.name || "Affiliate",
+    currentRank: rank.rank,
+    nextRank: next ? next.rank : "Top Rank",
+    qualifiesForCommission: qualifies,
+
+    personalSales: money(affiliate.personalSales),
+    teamSales: money(affiliate.teamSales),
+    activeLevel1Members: money(affiliate.activeLevel1Members),
+
+    requiredMaintenance: rank.maintenance,
+    requiredTeamSales: rank.target,
+    requiredActiveMembers: rank.active,
+
+    levelsUnlocked: rank.levels,
+    bonus: qualifies ? rank.bonus : 0,
+    salary: qualifies ? rank.salary : 0,
+    progressPercent: Number(progressPercent.toFixed(2)),
+
+    message: qualifies
+      ? `Congratulations! You qualify for ${rank.rank} commission.`
+      : "You do not qualify yet. Reach maintenance, team sales target, and active Level 1 members."
+  };
+}
+
 app.get("/", (req, res) => {
-  res.send("MLM backend is running");
+  res.send("MLM Compensation Backend is running.");
 });
 
-/*
-  TEMP TEST DATA (until GoAffPro API is connected)
-*/
 app.get("/api/dashboard", (req, res) => {
-
-  const affiliate = {
+  const testAffiliate = {
     name: "Test Affiliate",
     personalSales: 3000,
     teamSales: 180000,
     activeLevel1Members: 8
   };
 
-  const rank = calculateRank(affiliate);
-  const next = getNextRank(rank);
+  res.json(buildDashboard(testAffiliate));
+});
 
-  const qualifies =
-    affiliate.personalSales >= rank.maintenance &&
-    affiliate.teamSales >= rank.target &&
-    affiliate.activeLevel1Members >= rank.active;
+app.post("/api/dashboard", (req, res) => {
+  res.json(buildDashboard(req.body));
+});
 
-  const progressTarget = next ? next.target : rank.target;
-  const progressPercent = Math.min((affiliate.teamSales / progressTarget) * 100, 100);
-
-  res.json({
-    affiliateName: affiliate.name,
-    currentRank: rank.rank,
-    nextRank: next ? next.rank : "Top Rank",
-    qualifiesForCommission: qualifies,
-    personalSales: affiliate.personalSales,
-    teamSales: affiliate.teamSales,
-    activeLevel1Members: affiliate.activeLevel1Members,
-    requiredMaintenance: rank.maintenance,
-    requiredActiveMembers: rank.active,
-    levelsUnlocked: rank.levels,
-    bonus: qualifies ? rank.bonus : 0,
-    salary: qualifies ? rank.salary : 0,
-    progressPercent: Number(progressPercent.toFixed(2)),
-    message: qualifies
-      ? `🎉 You qualify for ${rank.rank}!`
-      : "⚠️ You do not qualify yet."
-  });
-
+app.get("/api/ranks", (req, res) => {
+  res.json(ranks);
 });
 
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log("Server running on port " + PORT);
+  console.log(`MLM Compensation Backend running on port ${PORT}`);
 });
